@@ -38,7 +38,7 @@
 #include "WProgram.h"
 #endif
 
-#include "PCM.h"
+#include "PCMmem.h"
 
 /*
  * The audio data needs to be unsigned, 8-bit, 8000 Hz, and small enough
@@ -64,36 +64,85 @@
  * sox audiodump.wav -c 1 -r 8000 -u -b macstartup-8000.wav
  */
 
-int speakerPin = 11;
-unsigned char const *sounddata_data=0;
-int sounddata_length=0;
+int speaker_pin = 11;
+bool use_timer0 = false;
+unsigned char const *sounddata_data = 0;
+unsigned int sounddata_length = 0;
+bool loop_playback = false;
 volatile uint16_t sample;
 byte lastSample;
 
-// This is called at 8000 Hz to load the next sample.
-ISR(TIMER1_COMPA_vect) {
+#define OCR2x(value) if (speaker_pin == 11) { OCR2A = (value); } else { OCR2B = (value); }
+
+void __updateSample() {
+  if (loop_playback && sample >= sounddata_length) {
+    sample = 0;
+  }
   if (sample >= sounddata_length) {
     if (sample == sounddata_length + lastSample) {
       stopPlayback();
     }
     else {
       // Ramp down to zero to reduce the click at the end of playback.
-      OCR2A = sounddata_length + lastSample - sample;
+      OCR2x(sounddata_length + lastSample - sample)
     }
   }
   else {
-    OCR2A = pgm_read_byte(&sounddata_data[sample]);
+    OCR2x(pgm_read_byte(&sounddata_data[sample]))
   }
   
   ++sample;
 }
 
-void startPlayback(unsigned char const *data, int length)
+// This is called at near 8000 Hz to load the next sample.
+ISR(TIMER0_COMPA_vect) {
+  if (use_timer0) {
+    __updateSample();
+  } 
+}
+
+ISR(TIMER1_COMPA_vect) {
+  if (!use_timer0) {
+    __updateSample();
+  }
+}
+
+void useTimer0(bool use) {
+  use_timer0 = use;
+}
+
+uint8_t setSpeakerPin(uint8_t pin) {
+  speaker_pin = pin == 3 ? pin : 11;
+  return speaker_pin;
+}
+
+uint8_t getSpeakerPin(uint8_t pin) {
+  return speaker_pin;
+}
+
+void altDelay(unsigned long ms) {
+  delay(use_timer0 ? ms << 3 : ms);
+}
+
+void altDelayMicroseconds(unsigned int us) {
+  delayMicroseconds(use_timer0 ? us << 3 : us);
+}
+
+unsigned long altMicros() {
+  return micros() << use_timer0 ? 3 : 0;
+}
+
+unsigned long altMillis() {
+  return millis() << use_timer0 ? 3 : 0;
+}
+
+void startPlayback(unsigned char const *data, int length, bool loop)
 {
+  loop_playback = loop;
   sounddata_data = data;
   sounddata_length = length;
 
-  pinMode(speakerPin, OUTPUT);
+  pinMode(speaker_pin, OUTPUT);
   
   // Set up Timer 2 to do pulse width modulation on the speaker
   // pin.
@@ -105,37 +154,54 @@ void startPlayback(unsigned char const *data, int length)
   TCCR2A |= _BV(WGM21) | _BV(WGM20);
   TCCR2B &= ~_BV(WGM22);
   
-  // Do non-inverting PWM on pin OC2A (p.155)
-  // On the Arduino this is pin 11.
-  TCCR2A = (TCCR2A | _BV(COM2A1)) & ~_BV(COM2A0);
-  TCCR2A &= ~(_BV(COM2B1) | _BV(COM2B0));
+  if (speaker_pin == 11) {
+    // Do non-inverting PWM on pin OC2A (p.155)
+    // On the Arduino this is pin 11.
+    TCCR2A = (TCCR2A | _BV(COM2A1)) & ~_BV(COM2A0);
+    TCCR2A &= ~(_BV(COM2B1) | _BV(COM2B0));
+  } else {
+    // Do non-inverting PWM on pin OC2B (p.155)
+    // On the Arduino this is pin 3.
+    TCCR2A = (TCCR2A | _BV(COM2B1)) & ~_BV(COM2B0);
+    TCCR2A &= ~(_BV(COM2A1) | _BV(COM2A0));
+  }
   
   // No prescaler (p.158)
   TCCR2B = (TCCR2B & ~(_BV(CS12) | _BV(CS11))) | _BV(CS10);
   
   // Set initial pulse width to the first sample.
-  OCR2A = pgm_read_byte(&sounddata_data[0]);
+  OCR2x(pgm_read_byte(&sounddata_data[0]))
   
   
-  // Set up Timer 1 to send a sample every interrupt.
+  // Set up Timer 1 or Timer 0 to send a sample every interrupt.
   
   cli();
   
-  // Set CTC mode (Clear Timer on Compare Match) (p.133)
-  // Have to set OCR1A *after*, otherwise it gets reset to 0!
-  TCCR1B = (TCCR1B & ~_BV(WGM13)) | _BV(WGM12);
-  TCCR1A = TCCR1A & ~(_BV(WGM11) | _BV(WGM10));
-  
-  // No prescaler (p.134)
-  TCCR1B = (TCCR1B & ~(_BV(CS12) | _BV(CS11))) | _BV(CS10);
-  
-  // Set the compare register (OCR1A).
-  // OCR1A is a 16-bit register, so we have to do this with
-  // interrupts disabled to be safe.
-  OCR1A = F_CPU / SAMPLE_RATE;    // 16e6 / 8000 = 2000
-  
-  // Enable interrupt when TCNT1 == OCR1A (p.136)
-  TIMSK1 |= _BV(OCIE1A);
+  if (use_timer0) {
+    // Timer 0 using fast PWM mode by default
+    // No prescaler (p.134)
+    // Make millis and micros 8 times fast
+    TCCR0B = (TCCR0B & ~(_BV(CS02) | _BV(CS00))) | _BV(CS01);
+
+    // Enable interrupt when TCNT1 == OCR1A (p.136)
+    TIMSK0 |= _BV(OCIE0A);
+  } else {
+    // Set CTC mode (Clear Timer on Compare Match) (p.133)
+    // Have to set OCR1A *after*, otherwise it gets reset to 0!
+    TCCR1B = (TCCR1B & ~_BV(WGM13)) | _BV(WGM12);
+    TCCR1A = TCCR1A & ~(_BV(WGM11) | _BV(WGM10));
+    
+    // No prescaler (p.134)
+    TCCR1B = (TCCR1B & ~(_BV(CS12) | _BV(CS11))) | _BV(CS10);
+    
+    // Set the compare register (OCR1A).
+    // OCR1A is a 16-bit register, so we have to do this with
+    // interrupts disabled to be safe.
+    OCR1A = F_CPU / SAMPLE_RATE;    // 16e6 / 8000 = 2000
+    
+    // Enable interrupt when TCNT1 == OCR1A (p.136)
+    TIMSK1 |= _BV(OCIE1A);
+  }
   
   lastSample = pgm_read_byte(&sounddata_data[sounddata_length-1]);
   sample = 0;
@@ -153,5 +219,5 @@ void stopPlayback()
   // Disable the PWM timer.
   TCCR2B &= ~_BV(CS10);
   
-  digitalWrite(speakerPin, LOW);
+  digitalWrite(speaker_pin, LOW);
 }
