@@ -69,10 +69,16 @@ bool use_timer0 = false;
 unsigned char const *sounddata_data = 0;
 unsigned int sounddata_length = 0;
 bool loop_playback = false;
+volatile bool paused = false;
 volatile uint16_t sample;
 byte lastSample;
+char originalTCCR0B = 0;
+
+void (*onStoppedHandlerPrt) () = NULL;
 
 #define OCR2x(value) if (speaker_pin == 11) { OCR2A = (value); } else { OCR2B = (value); }
+
+void __stopPlayback();
 
 void __updateSample() {
   if (loop_playback && sample >= sounddata_length) {
@@ -80,7 +86,7 @@ void __updateSample() {
   }
   if (sample >= sounddata_length) {
     if (sample == sounddata_length + lastSample) {
-      stopPlayback();
+      __stopPlayback();
     }
     else {
       // Ramp down to zero to reduce the click at the end of playback.
@@ -91,24 +97,22 @@ void __updateSample() {
     OCR2x(pgm_read_byte(&sounddata_data[sample]))
   }
   
-  ++sample;
-}
-
-// This is called at near 8000 Hz to load the next sample.
-ISR(TIMER0_COMPA_vect) {
-  if (use_timer0) {
-    __updateSample();
-  } 
-}
-
-ISR(TIMER1_COMPA_vect) {
-  if (!use_timer0) {
-    __updateSample();
+  if (!paused) {
+    ++sample;
   }
 }
 
-void useTimer0(bool use) {
-  use_timer0 = use;
+// This is called at near 8000 Hz to load the next sample.
+#ifdef PCM_MEM_USE_TIMER0
+ISR(TIMER0_COMPA_vect) {
+#else
+ISR(TIMER1_COMPA_vect) {
+#endif
+  __updateSample();
+}
+
+bool isUsingTimer0() {
+  return use_timer0;
 }
 
 uint8_t setSpeakerPin(uint8_t pin) {
@@ -141,6 +145,7 @@ void startPlayback(unsigned char const *data, int length, bool loop)
   loop_playback = loop;
   sounddata_data = data;
   sounddata_length = length;
+  paused = false;
 
   pinMode(speaker_pin, OUTPUT);
   
@@ -174,6 +179,9 @@ void startPlayback(unsigned char const *data, int length, bool loop)
   
   
   // Set up Timer 1 or Timer 0 to send a sample every interrupt.
+#ifdef PCM_MEM_USE_TIMER0
+  use_timer0 = true;
+#endif
   
   cli();
   
@@ -181,6 +189,7 @@ void startPlayback(unsigned char const *data, int length, bool loop)
     // Timer 0 using fast PWM mode by default
     // No prescaler (p.134)
     // Make millis and micros 8 times fast
+    originalTCCR0B = TCCR0B;
     TCCR0B = (TCCR0B & ~(_BV(CS02) | _BV(CS00))) | _BV(CS01);
 
     // Enable interrupt when TCNT1 == OCR1A (p.136)
@@ -208,16 +217,47 @@ void startPlayback(unsigned char const *data, int length, bool loop)
   sei();
 }
 
-void stopPlayback()
+void __stopPlayback()
 {
-  // Disable playback per-sample interrupt.
-  TIMSK1 &= ~_BV(OCIE1A);
-  
-  // Disable the per-sample timer completely.
-  TCCR1B &= ~_BV(CS10);
+  if (use_timer0) {
+    // Disable playback per-sample interrupt.
+    TCCR0B = originalTCCR0B;
+    TIMSK0 &= ~_BV(OCIE0A);
+    use_timer0 = false;
+  } else {
+    // Disable playback per-sample interrupt.
+    TIMSK1 &= ~_BV(OCIE1A);
+    
+    // Disable the per-sample timer completely.
+    TCCR1B &= ~_BV(CS10);
+  }
   
   // Disable the PWM timer.
   TCCR2B &= ~_BV(CS10);
   
   digitalWrite(speaker_pin, LOW);
+  pinMode(speaker_pin, INPUT);
+  if (onStoppedHandlerPrt) {
+    onStoppedHandlerPrt();
+  }
+}
+
+void stopPlayback()
+{
+  loop_playback = false;
+  sample = sounddata_length;
+}
+
+void pausePlayback()
+{
+  paused = true;
+}
+
+void continuePlayback()
+{
+  paused = false;
+}
+
+void setOnStopped(void (*onStoppedHandler)()) {
+  onStoppedHandlerPrt = onStoppedHandler;
 }

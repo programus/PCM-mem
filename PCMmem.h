@@ -57,16 +57,17 @@
 #include <avr/pgmspace.h>
 
 /**
- * Set whether use timer0.
+ * Get whether use timer0.
+ * Use time1 default, to use timer0, add -D PCM_MEM_USE_TIMER0 to build flags
  * 
  * Use timer0 will free timer1 which is used by Servo motor, 
  * but the audio playing frequency would be 7812.5 Hz which is a little lower than 8000 Hz, 
  * and delay(), micro() and millis() functions could not be used, 
  * you must use altDelay(), altMicro, altMillis() instead.
  * 
- * @param use true to use timer0 or false to use timer1
+ * @return true if using timer0 or false if using timer1
  */
-void useTimer0(bool use = true);
+bool isUsingTimer0();
 
 /**
  * Set the pin tha connect the speaker. 
@@ -108,5 +109,9 @@ unsigned long altMillis();
 
 void startPlayback(unsigned char const *data, int length, bool loop = false);
 void stopPlayback();
+void pausePlayback();
+void continuePlayback();
+
+void setOnStopped(void (*onStoppedHandler)());
 
 #endif
