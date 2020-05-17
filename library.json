@@ -1,0 +1,19 @@
+{
+  "name": "PCM-mem",
+  "keywords": "pcm,play,sound,wav,music,speaker,servo",
+  "description": "Arduino Library to play short audio samples stored in PROGMEM. Based on PCM library while this library could work with Servo and include some other additional features.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/programus/PCM-mem"
+  },
+  "authors": [
+    {
+      "name": "Programus",
+      "email": "programus@gmail.com",
+      "maintainer": true
+    }
+  ],
+  "version": "1.0",
+  "frameworks": "arduino",
+  "platforms": "*"
+}
