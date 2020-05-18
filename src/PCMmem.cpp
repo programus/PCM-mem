@@ -65,7 +65,7 @@
  */
 
 int speaker_pin = 11;
-bool use_timer0 = false;
+volatile bool use_timer0 = false;
 unsigned char const *sounddata_data = 0;
 unsigned int sounddata_length = 0;
 bool loop_playback = false;
