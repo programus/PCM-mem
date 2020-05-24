@@ -125,19 +125,19 @@ uint8_t getSpeakerPin(uint8_t pin) {
 }
 
 void altDelay(unsigned long ms) {
-  delay(use_timer0 ? ms << 3 : ms);
+  delay(use_timer0 ? (ms << 3) : ms);
 }
 
 void altDelayMicroseconds(unsigned int us) {
-  delayMicroseconds(use_timer0 ? us << 3 : us);
+  delayMicroseconds(use_timer0 ? (us << 3) : us);
 }
 
 unsigned long altMicros() {
-  return micros() << use_timer0 ? 3 : 0;
+  return micros() << (use_timer0 ? 3 : 0);
 }
 
 unsigned long altMillis() {
-  return millis() << use_timer0 ? 3 : 0;
+  return millis() << (use_timer0 ? 3 : 0);
 }
 
 void startPlayback(unsigned char const *data, int length, bool loop)
