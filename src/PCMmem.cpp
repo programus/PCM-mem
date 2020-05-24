@@ -133,11 +133,11 @@ void altDelayMicroseconds(unsigned int us) {
 }
 
 unsigned long altMicros() {
-  return micros() << (use_timer0 ? 3 : 0);
+  return micros() >> (use_timer0 ? 3 : 0);
 }
 
 unsigned long altMillis() {
-  return millis() << (use_timer0 ? 3 : 0);
+  return millis() >> (use_timer0 ? 3 : 0);
 }
 
 void startPlayback(unsigned char const *data, int length, bool loop)
